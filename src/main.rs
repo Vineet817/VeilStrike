@@ -4,7 +4,8 @@ use std::path::PathBuf;
 mod target;
 mod recon;
 mod utils;
-
+mod tcp_udp;
+use tcp_udp::*;
 use target::Target;
 
 #[derive(Parser, Debug)]
@@ -36,6 +37,7 @@ async fn main() {
         Ok(target) => {
             println!("🔍 Target identified: {:?}", target);
             recon::run_recon(&target).await;
+            run_port_scans("output/recon_output.csv").await;
         }
         Err(e) => {
             eprintln!("❌ {}", e);

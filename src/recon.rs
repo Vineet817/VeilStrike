@@ -86,7 +86,7 @@ pub async fn discover_subdomains(domain: &str) -> std::io::Result<()> {
     let semaphore = Arc::new(Semaphore::new(600));
 
     // Open file and prepare writer
-    let file = OpenOptions::new().create(true).append(true).open("../output/recon_output.csv")?;
+    let file = OpenOptions::new().create(true).append(true).open("/output/recon_output.csv")?;
     let mut wtr = Writer::from_writer(file);
 
     // Optionally write header
@@ -97,7 +97,7 @@ pub async fn discover_subdomains(domain: &str) -> std::io::Result<()> {
     for sub in subnames {
         let domain = Arc::clone(&domain);
         let semaphore = Arc::clone(&semaphore);
-        let writer_path = "recon_output.csv".to_string();
+        let writer_path = "/output/recon_output.csv".to_string();
 
         futures.push(tokio::spawn(async move {
             let _permit = semaphore.acquire().await.unwrap();
