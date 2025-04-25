@@ -74,6 +74,7 @@ use std::fs::OpenOptions;
 use csv::Writer;
 pub async fn discover_subdomains(domain: &str) -> std::io::Result<()> {
     let wordlist_path = "wordlists/subdomains.txt";
+
     let subnames = match crate::utils::load_wordlist(wordlist_path) {
         Ok(words) => words,
         Err(e) => {
@@ -86,7 +87,11 @@ pub async fn discover_subdomains(domain: &str) -> std::io::Result<()> {
     let semaphore = Arc::new(Semaphore::new(600));
 
     // Open file and prepare writer
-    let file = OpenOptions::new().create(true).append(true).open("/output/recon_output.csv")?;
+    let file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("output/recon_output.csv")?;
+
     let mut wtr = Writer::from_writer(file);
 
     // Optionally write header
@@ -97,7 +102,8 @@ pub async fn discover_subdomains(domain: &str) -> std::io::Result<()> {
     for sub in subnames {
         let domain = Arc::clone(&domain);
         let semaphore = Arc::clone(&semaphore);
-        let writer_path = "/output/recon_output.csv".to_string();
+        std::fs::create_dir_all("output")?;
+        let writer_path = "output/recon_output.csv".to_string();
 
         futures.push(tokio::spawn(async move {
             let _permit = semaphore.acquire().await.unwrap();
