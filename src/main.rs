@@ -37,7 +37,7 @@ async fn main() {
         Ok(target) => {
             println!("🔍 Target identified: {:?}", target);
             recon::run_recon(&target).await;
-            run_port_scans("output/recon_output.csv").await;
+            run_conditional_port_scans("output/recon_output.csv").await;
         }
         Err(e) => {
             eprintln!("❌ {}", e);

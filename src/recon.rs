@@ -1,11 +1,12 @@
+use std::fs::File;
 use crate::target::{Target, TargetType};
 use trust_dns_resolver::{TokioAsyncResolver, config::*};
 use std::net::IpAddr;
 use futures::stream::{FuturesUnordered, StreamExt};
 use std::sync::Arc;
 use std::result::Result;
-use tokio::sync::Semaphore;
-
+use tokio::sync::{Mutex, Semaphore};
+use csv::{ReaderBuilder, Writer};
 
 use crate::utils::{load_wordlist, write_recon_to_csv, extract_domain_from_url};
 
@@ -70,12 +71,12 @@ pub async fn resolve_dns(domain: &str) -> Result<Vec<IpAddr>, String> {
     }
 }
 
-use std::fs::OpenOptions;
-use csv::Writer;
+
+
 pub async fn discover_subdomains(domain: &str) -> std::io::Result<()> {
     let wordlist_path = "wordlists/subdomains.txt";
 
-    let subnames = match crate::utils::load_wordlist(wordlist_path) {
+    let subnames = match load_wordlist(wordlist_path) {
         Ok(words) => words,
         Err(e) => {
             eprintln!("❌ Could not load wordlist: {}", e);
@@ -86,24 +87,23 @@ pub async fn discover_subdomains(domain: &str) -> std::io::Result<()> {
     let domain = Arc::new(domain.to_string());
     let semaphore = Arc::new(Semaphore::new(600));
 
-    // Open file and prepare writer
-    let file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("output/recon_output.csv")?;
+    std::fs::create_dir_all("output")?;
+    let file = File::create("output/recon_output.csv")?;
+    let wtr = Arc::new(Mutex::new(Writer::from_writer(file)));
 
-    let mut wtr = Writer::from_writer(file);
-
-    // Optionally write header
-    wtr.write_record(&["Subdomain", "IP Addresses"])?;
+    // ✅ Write header once
+    {
+        let mut writer = wtr.lock().await;
+        writer.write_record(&["Subdomain", "IP Addresses"])?;
+        writer.flush()?;
+    }
 
     let mut futures = FuturesUnordered::new();
 
     for sub in subnames {
         let domain = Arc::clone(&domain);
         let semaphore = Arc::clone(&semaphore);
-        std::fs::create_dir_all("output")?;
-        let writer_path = "output/recon_output.csv".to_string();
+        let wtr = Arc::clone(&wtr); // ✅ move writer into task
 
         futures.push(tokio::spawn(async move {
             let _permit = semaphore.acquire().await.unwrap();
@@ -111,20 +111,15 @@ pub async fn discover_subdomains(domain: &str) -> std::io::Result<()> {
 
             match crate::recon::resolve_dns(&full).await {
                 Ok(ips) if !ips.is_empty() => {
-                    // ✅ Print to terminal
                     println!("✅ Found: {} → {:?}", full, ips);
 
-                    // ✅ Append to CSV
-                    let mut wtr = csv::Writer::from_writer(
-                        std::fs::OpenOptions::new()
-                            .append(true)
-                            .open(&writer_path)
-                            .expect("Failed to open CSV")
-                    );
-
                     let ip_list = ips.iter().map(|ip| ip.to_string()).collect::<Vec<_>>().join(", ");
-                    let _ = wtr.write_record(&[&full, &ip_list]);
-                    let _ = wtr.flush();
+
+                    let mut writer = wtr.lock().await;
+                    if let Err(e) = writer.write_record(&[&full, &ip_list]) {
+                        eprintln!("❌ Failed to write to CSV: {}", e);
+                    }
+                    let _ = writer.flush();
 
                     Some((full, ips))
                 }
@@ -132,7 +127,6 @@ pub async fn discover_subdomains(domain: &str) -> std::io::Result<()> {
             }
         }));
     }
-
 
     let mut count = 0;
     while let Some(result) = futures.next().await {
@@ -142,5 +136,32 @@ pub async fn discover_subdomains(domain: &str) -> std::io::Result<()> {
     }
 
     println!("\n✅ Total subdomains found: {}", count);
+
+    // ✅ Final CSV validation
+    let file = File::open("output/recon_output.csv")?;
+    let mut reader = ReaderBuilder::new()
+        .has_headers(true)
+        .from_reader(file);
+
+    let expected_field_count = 2;
+    for (i, result) in reader.records().enumerate() {
+        match result {
+            Ok(record) => {
+                if record.len() != expected_field_count {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("CSV validation error: record {} has {} fields", i + 2, record.len()),
+                    ));
+                }
+            }
+            Err(e) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("CSV parsing error at record {}: {}", i + 2, e),
+                ));
+            }
+        }
+    }
+
     Ok(())
 }
